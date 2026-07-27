@@ -16,7 +16,7 @@
   the moment money moves. Any proposal CLAIMING to have charged someone is
   a permanent scope exclusion.
 
-  Six HARD checks, ALL permanent, un-overridable by any human approval:
+  Seven HARD checks, ALL permanent, un-overridable by any human approval:
 
     1. Pledge invalid       -- `crowdfunding.pledge/pledge-errors`, run
                                against the STORE's campaign and reward
@@ -27,16 +27,22 @@
     2. Uncomputable total   -- a pledge whose total cannot be computed
                                must never be recorded. A total that is
                                nil today is a charge invented later.
-    3. Duplicate pledge id  -- accepting an id that already exists would
+    3. Pricing-model mismatch -- a pledge on a `:deposit-plus-settlement`
+                               campaign with no quotation has no cap at
+                               all; a quotation on a `:fixed` campaign is a
+                               backer who thinks they have one. Neither is
+                               visible from the campaign or the pledge
+                               alone.
+    4. Duplicate pledge id  -- accepting an id that already exists would
                                overwrite a backer's commitment. Idempotency
                                is a refusal, not an overwrite.
-    4. Outside the window   -- cancelling or changing after the deadline.
+    5. Outside the window   -- cancelling or changing after the deadline.
                                The outcome was decided using this pledge;
                                after that point the question is a REFUND,
                                which is a different actor's decision.
-    5. Effect not :propose  -- any other value is a claim to directly
+    6. Effect not :propose  -- any other value is a claim to directly
                                actuate outside governance.
-    6. Scope exclusion      -- any claim to have charged, captured or
+    7. Scope exclusion      -- any claim to have charged, captured or
                                refunded, plus any op outside the closed
                                allowlist.
 
@@ -49,6 +55,7 @@
       different act wearing the same op, and `platform-initiated?` is what
       separates them."
   (:require [clojure.string :as str]
+            [crowdfunding.passthrough :as passthrough]
             [crowdfunding.pledge :as pledge]
             [pledgeops.store :as store]))
 
@@ -127,6 +134,40 @@
         [{:rule :total-uncomputable
           :detail "アドオン未解決・配送不可などで請求額が確定できない"}]))))
 
+(defn- pricing-model-violations
+  "A pledge and its campaign must agree about how the backer's final price
+  is determined.
+
+  Two failures, and neither is visible from the campaign alone or the
+  pledge alone:
+
+  - a pledge on a `:deposit-plus-settlement` campaign with NO quotation
+    has no deposit, no margin and — critically — **no cap**. It would
+    settle at whatever the parts cost. That is an unbounded commitment
+    wearing the shape of a bounded one, and it is the single failure
+    `crowdfunding.passthrough` exists to prevent.
+  - a quotation on a `:fixed` campaign is the mirror: a backer who
+    believes they agreed to a cap that will never be applied.
+
+  The campaign's pricing model is read from the STORE, never from the
+  request — the same 'ground truth, not self-report' rule the tier
+  availability check uses. `crowdfunding.passthrough/campaign-quote-errors`
+  owns the rule; this function supplies the store lookups."
+  [proposal st]
+  (when (contains? #{:accept-pledge :change-pledge} (:op proposal))
+    (let [cid (get-in proposal [:value :campaign-id])
+          c   (store/campaign-of st cid)
+          p   (subject proposal st)
+          id  (get-in proposal [:value :pledge-id])
+          q   (or (get-in proposal [:value :quote]) (store/quote-of st id))]
+      (when (and c p)
+        (when-let [errs (seq (passthrough/campaign-quote-errors
+                              c [p] (cond-> {} q (assoc (:pledge/id p) q))))]
+          (mapv (fn [e] {:rule   (:passthrough.error/code e)
+                         :detail (or (:passthrough.error/detail e)
+                                     (name (:passthrough.error/code e)))})
+                errs))))))
+
 (defn- duplicate-violations
   "Accepting an id that already exists would overwrite a backer's
   commitment. Idempotency here is a refusal, not an overwrite."
@@ -183,6 +224,7 @@
         hard (into []
                    (concat (validity-violations proposal store now)
                            (total-violations proposal store)
+                           (pricing-model-violations proposal store)
                            (duplicate-violations proposal store)
                            (window-violations proposal store now)
                            (effect-not-propose-violations proposal)

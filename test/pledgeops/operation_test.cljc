@@ -105,6 +105,28 @@
     (is (= :hold (:disposition (:state r))))
     (is (nil? (store/pledge-of s "pl-new")))))
 
+(deftest a-pass-through-pledge-carries-its-cap-into-the-store
+  (let [s (store/seed-db)
+        a (operation/build s)
+        req {:op :accept-pledge :campaign-id "cf-slot" :pledge-id "sl-1"
+             :patch {:backer "backer.slot" :amount-minor 100000 :reward "standard"
+                     :ship-to :jp :placed-at "2026-08-20T00:00:00Z"
+                     :quote {:deposit-minor 100000 :margin-minor 80000
+                             :cap-minor 600000 :estimate-minor 380000
+                             :basis-note "B70 x1, DDR5 128GB — 2026-07 spot"}}}
+        r (run-req! a "t9" req)]
+    (is (= :commit (:disposition (:state r))))
+    (is (= 600000 (:quote/cap-minor (store/quote-of s "sl-1")))
+        "the cap is stored with the pledge, because it is what THIS backer agreed to")
+    (testing "and the same request without a quote never reaches the store"
+      (let [r2 (run-req! a "t10" (-> req
+                                     (assoc :pledge-id "sl-2")
+                                     (update :patch dissoc :quote)))]
+        (is (= :hold (:disposition (:state r2))))
+        (is (nil? (store/pledge-of s "sl-2")))
+        (is (nil? (store/quote-of s "sl-2")))
+        (is (contains? (set (:basis (last (store/ledger s)))) :missing-quote))))))
+
 (deftest testing-note-this-actor-has-no-charge-path-at-all
   (testing "not policy — there is no op, no rail and no store field for it"
     (is (not-any? #{:charge-pledge :capture-payment :collect}

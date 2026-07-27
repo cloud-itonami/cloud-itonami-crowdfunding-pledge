@@ -95,6 +95,77 @@
     (is (contains? (rules (sut/check {} ctx {:op :capture-payment :effect :propose} st))
                    :op-not-allowed))))
 
+;; ───────────────────────── pricing model ─────────────────────────
+
+(def slot-request
+  {:op :accept-pledge :campaign-id "cf-slot" :pledge-id "sl-1"
+   :patch {:backer "backer.slot" :amount-minor 100000 :reward "standard"
+           :ship-to :jp :placed-at "2026-08-20T00:00:00Z"}})
+
+(deftest a-pass-through-pledge-without-a-quote-has-no-cap-and-is-refused
+  (testing "an unbounded commitment wearing the shape of a bounded one"
+    (let [st (store/seed-db)
+          v  (verdict st slot-request)]
+      (is (true? (:hard? v)))
+      (is (contains? (rules v) :missing-quote)))))
+
+(deftest a-pass-through-pledge-with-a-valid-quote-is-accepted
+  (let [st (store/seed-db)
+        v  (verdict st (assoc-in slot-request [:patch :quote]
+                                 {:deposit-minor 100000 :margin-minor 80000
+                                  :cap-minor 600000 :estimate-minor 380000
+                                  :basis-note "B70 x1, DDR5 128GB — 2026-07 spot"}))]
+    (is (= #{} (rules v)))
+    (is (true? (:ok? v)))))
+
+(deftest a-quote-whose-cap-does-not-cap-is-refused
+  (let [st (store/seed-db)
+        v  (verdict st (assoc-in slot-request [:patch :quote]
+                                 {:deposit-minor 100000 :margin-minor 80000
+                                  :cap-minor 50000 :estimate-minor 380000
+                                  :basis-note "x"}))]
+    (is (contains? (rules v) :cap-below-deposit))))
+
+(deftest a-pass-through-price-with-no-stated-basis-is-just-a-price
+  (let [st (store/seed-db)
+        v  (verdict st (assoc-in slot-request [:patch :quote]
+                                 {:deposit-minor 100000 :margin-minor 80000
+                                  :cap-minor 600000 :estimate-minor 380000}))]
+    (is (contains? (rules v) :missing-basis-note))))
+
+(deftest a-quote-on-a-fixed-price-campaign-is-a-backer-who-thinks-they-have-a-cap
+  (let [st (store/seed-db)
+        v  (verdict st (assoc-in a-request [:patch :quote]
+                                 {:deposit-minor 100000 :margin-minor 80000
+                                  :cap-minor 600000 :estimate-minor 380000
+                                  :basis-note "x"}))]
+    (is (contains? (rules v) :quote-on-fixed-price-campaign))))
+
+(deftest the-pricing-model-is-read-from-the-store-not-the-request
+  (testing "a request cannot declare itself fixed-price to escape the cap requirement"
+    (let [st    (store/seed-db)
+          lying {:op :accept-pledge :pledge-id "sl-1" :effect :propose :confidence 0.9
+                 :summary "支援受付を提案"
+                 :value {:pledge-id "sl-1" :campaign-id "cf-slot"
+                         :pledge (assoc (store/draft-pledge st slot-request)
+                                        :pledge/pricing-model :fixed)}}]
+      (is (contains? (rules (sut/check {} ctx lying st)) :missing-quote)))))
+
+(deftest changing-a-pledge-does-not-silently-drop-the-cap
+  (testing "the quote a backer already agreed to still stands through a change"
+    (let [st (store/seed-db)]
+      (store/commit-record!
+       st {:op :accept-pledge
+           :value {:pledge-id "sl-1" :campaign-id "cf-slot"
+                   :pledge (store/draft-pledge st slot-request)
+                   :quote store/demo-quote}})
+      (is (some? (store/quote-of st "sl-1")))
+      (is (= #{} (rules (verdict st {:op :change-pledge :campaign-id "cf-slot"
+                                     :pledge-id "sl-1"
+                                     :patch {:backer "backer.slot" :amount-minor 120000
+                                             :reward "standard" :ship-to :jp
+                                             :placed-at "2026-08-20T00:00:00Z"}})))))))
+
 ;; ───────────────────────── the right / favour distinction ─────────────────────────
 
 (deftest a-backers-own-cancellation-is-a-right-and-does-not-queue-for-approval

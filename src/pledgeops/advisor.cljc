@@ -29,26 +29,35 @@
 (defn- propose-accept
   [st {:keys [campaign-id pledge-id] :as request}]
   (let [p     (store/draft-pledge st request)
+        q     (store/draft-quote request)
         total (pledge/total-minor p (store/rewards st campaign-id))]
     {:op          :accept-pledge
      :pledge-id   pledge-id
      :campaign-id campaign-id
-     :summary     (str pledge-id " の支援受付を提案: " (or total "算定不能")
-                       " (" (or (:pledge/reward p) "リワードなし") ")")
+     :summary     (if q
+                    (str pledge-id " の支援受付を提案: 頭金 " (:quote/deposit-minor q)
+                         " / 上限 " (:quote/cap-minor q) " (build slot)")
+                    (str pledge-id " の支援受付を提案: " (or total "算定不能")
+                         " (" (or (:pledge/reward p) "リワードなし") ")"))
      :rationale   "支援の意思表示の記録のみ。決済は締切後に別のアクターが行う。"
      :cites       (vec (keep identity [campaign-id (:pledge/reward p)]))
      :effect      :propose
-     :value       {:pledge-id pledge-id :campaign-id campaign-id
-                   :pledge p :total-minor total}
+     :value       (cond-> {:pledge-id pledge-id :campaign-id campaign-id
+                           :pledge p :total-minor total}
+                    q (assoc :quote q))
      :confidence  0.92}))
 
 (defn- propose-change
-  [st {:keys [campaign-id pledge-id patch]}]
+  [st {:keys [campaign-id pledge-id patch] :as request}]
   (let [prev (store/pledge-of st pledge-id)
         p    (merge prev (pledge/pledge (merge {:id pledge-id :campaign campaign-id}
                                                (select-keys patch
                                                             [:backer :amount-minor :reward
-                                                             :add-ons :ship-to :placed-at]))))]
+                                                             :add-ons :ship-to :placed-at]))))
+        ;; A change may restate the quotation; if it does not, the one the
+        ;; backer already agreed to still stands. Dropping it silently
+        ;; would remove their cap as a side effect of changing tier.
+        q    (or (store/draft-quote request) (store/quote-of st pledge-id))]
     {:op          :change-pledge
      :pledge-id   pledge-id
      :campaign-id campaign-id
@@ -57,7 +66,8 @@
      :rationale   "締切前の支援内容の差し替えのみ。旧リワードの在庫は同時に戻す。"
      :cites       [pledge-id]
      :effect      :propose
-     :value       {:pledge-id pledge-id :campaign-id campaign-id :pledge p}
+     :value       (cond-> {:pledge-id pledge-id :campaign-id campaign-id :pledge p}
+                    q (assoc :quote q))
      :confidence  0.88}))
 
 (defn- propose-cancel

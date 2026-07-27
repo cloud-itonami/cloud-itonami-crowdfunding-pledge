@@ -65,6 +65,27 @@
         (println "  status   :" (:status ok))
         (println "  状態      :" (:pledge/state (store/pledge-of s "pl-1")))))
 
+    (println "\n=== 6. build slot（部材 pass-through）は上限の合意が無いと受け付けない ===")
+    (let [base {:op :accept-pledge :campaign-id "cf-slot" :pledge-id "sl-1"
+                :patch {:backer "backer.slot" :amount-minor 100000
+                        :reward "standard" :ship-to :jp
+                        :placed-at "2026-08-20T00:00:00Z"}}
+          r (run-req! actor "sim-6a" base)]
+      (println "  上限なし    :" (:status r)
+               (mapv :rule (:violations (last (store/ledger s))))))
+    (let [ok (run-req! actor "sim-6b"
+                       {:op :accept-pledge :campaign-id "cf-slot" :pledge-id "sl-1"
+                        :patch {:backer "backer.slot" :amount-minor 100000
+                                :reward "standard" :ship-to :jp
+                                :placed-at "2026-08-20T00:00:00Z"
+                                :quote {:deposit-minor 100000 :margin-minor 80000
+                                        :cap-minor 600000 :estimate-minor 380000
+                                        :basis-note "B70 x1, DDR5 128GB, 2TB NVMe — 2026-07 spot"}}})
+          q  (store/quote-of s "sl-1")]
+      (println "  上限あり    :" (:status ok))
+      (println "  頭金/差益/上限:" (:quote/deposit-minor q) "/" (:quote/margin-minor q)
+               "/" (:quote/cap-minor q)))
+
     (println "\n=== 監査台帳 ===")
     (doseq [f (store/ledger s)]
       (println " " (:t f) (:op f) (or (:basis f) "")))))
