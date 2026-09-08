@@ -54,7 +54,7 @@
       the platform removing someone's pledge on its own initiative is a
       different act wearing the same op, and `platform-initiated?` is what
       separates them."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [crowdfunding.passthrough :as passthrough]
             [crowdfunding.pledge :as pledge]
             [pledgeops.store :as store]))
@@ -199,7 +199,7 @@
       :detail (str ":effect は :propose のみ許可されるが " (pr-str (:effect proposal)) " が提案された")}]))
 
 (defn- text-blob [proposal]
-  (str/lower-case (pr-str (select-keys proposal [:op :summary :rationale :cites]))))
+  (str/lower (pr-str (select-keys proposal [:op :summary :rationale :cites]))))
 
 (defn- scope-exclusion-violations [proposal]
   (let [op (:op proposal)
