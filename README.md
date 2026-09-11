@@ -82,9 +82,9 @@ backers who never paid is selling phantoms.
 ## Run it
 
 ```bash
-clojure -M:dev:run     # offline demo: intake, refusals, both cancellation paths, a capped build slot
-clojure -M:dev:test    # 33 tests
-clojure -M:lint
+kbb -M:dev:run     # offline demo: intake, refusals, both cancellation paths, a capped build slot
+kbb -M:dev:test    # 33 tests
+kbb -M:lint
 ```
 
 ## Licence

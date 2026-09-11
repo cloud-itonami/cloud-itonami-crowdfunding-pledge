@@ -2,7 +2,7 @@
   "Offline demo: accept a pledge, watch a sold-out tier and a closed
   window get refused, watch a backer cancel as of right, and watch a
   platform-initiated cancellation wait for a human.
-  `clojure -M:dev:run`."
+  `kbb -M:dev:run`."
   (:require [langgraph.graph :as g]
             [pledgeops.operation :as operation]
             [pledgeops.store :as store]))
